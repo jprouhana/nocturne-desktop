@@ -1,6 +1,7 @@
 // NOCTURNE desktop — Electron shell. Spawns the Python backend (which reuses
 // ytm.py's core) and renders the GUI that drives it over localhost.
-const { app, BrowserWindow, shell } = require("electron");
+const { app, BrowserWindow, shell, globalShortcut, Tray, Menu, nativeImage } =
+  require("electron");
 const { spawn } = require("child_process");
 const path = require("path");
 const fs = require("fs");
@@ -8,6 +9,19 @@ const http = require("http");
 
 const PORT = Number(process.env.NOCTURNE_PORT || 8770);
 let backend = null;
+let tray = null;
+
+// fire-and-forget POST to the backend — used by media keys + the tray menu
+// so playback responds even when the window isn't focused.
+function post(p) {
+  const req = http.request(
+    { host: "127.0.0.1", port: PORT, path: p, method: "POST",
+      headers: { "Content-Type": "application/json", "Content-Length": 2 } },
+    (r) => r.resume(),
+  );
+  req.on("error", () => {});
+  req.end("{}");
+}
 
 // play nice with Wayland / Hyprland: native Wayland surface (crisp, no
 // XWayland blur), and tolerate the laptop GPU without hard-failing
@@ -90,9 +104,66 @@ function createWindow() {
   });
 }
 
+// OS media keys (play/pause, next, prev, stop) — global, so they work even
+// when NOCTURNE isn't the focused window. Hyprland/most DEs forward the
+// hardware keys here; on Wayland a compositor may swallow them, hence the
+// per-key try so one failure doesn't sink the rest.
+function registerMediaKeys() {
+  const binds = {
+    MediaPlayPause: () => post("/api/toggle"),
+    MediaNextTrack: () => post("/api/next"),
+    MediaPreviousTrack: () => post("/api/prev"),
+    MediaStop: () => post("/api/toggle"),
+  };
+  for (const [key, fn] of Object.entries(binds)) {
+    try {
+      globalShortcut.register(key, fn);
+    } catch (e) {}
+  }
+}
+
+// system tray: quick transport controls + show/quit without the window
+function createTray() {
+  try {
+    const icon = nativeImage.createFromPath(
+      path.join(__dirname, "assets", "tray.png"),
+    );
+    tray = new Tray(icon);
+    tray.setToolTip("NOCTURNE");
+    tray.setContextMenu(
+      Menu.buildFromTemplate([
+        { label: "Play / Pause", click: () => post("/api/toggle") },
+        { label: "Next", click: () => post("/api/next") },
+        { label: "Previous", click: () => post("/api/prev") },
+        { type: "separator" },
+        {
+          label: "Show NOCTURNE",
+          click: () => {
+            const w = BrowserWindow.getAllWindows()[0];
+            if (w) (w.isVisible() ? w.focus() : w.show());
+            else createWindow();
+          },
+        },
+        { type: "separator" },
+        { label: "Quit", click: () => app.quit() },
+      ]),
+    );
+    // left-click the tray = raise the window
+    tray.on("click", () => {
+      const w = BrowserWindow.getAllWindows()[0];
+      if (w) (w.isVisible() ? w.focus() : w.show());
+      else createWindow();
+    });
+  } catch (e) {
+    console.log("tray init failed", e && e.message);
+  }
+}
+
 app.whenReady().then(() => {
   startBackend();
   waitForBackend(createWindow);
+  registerMediaKeys();
+  createTray();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
@@ -110,4 +181,5 @@ app.on("window-all-closed", () => {
   killBackend();
   app.quit();
 });
+app.on("will-quit", () => globalShortcut.unregisterAll());
 app.on("before-quit", killBackend);

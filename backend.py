@@ -100,13 +100,13 @@ class App:
         self.repeat = 0          # 0 off · 1 all · 2 one
         self.shuffle = False
         self.liked = {}          # video_id -> bool
+        self._sc_likes = None    # set[permalink] of soundcloud likes (lazy)
         self._lyrics = {}        # vid -> [(sec,line)] | [] | "..."
         self._aligning = None
         self._url_cache = {}
         self.spectrum = None     # live FFT off the default sink monitor
         try:
-            self.spectrum = N.SpectrumTap()
-            self.spectrum.start()
+            self.spectrum = N.SpectrumTap()   # spawns its own reader thread
         except Exception as e:
             print("spectrum tap failed:", e, file=sys.stderr)
         self._restore_queue()
@@ -195,7 +195,15 @@ class App:
         self._save_queue()
 
     def _fetch_liked(self, t):
-        if t.source == "sc" or not self.yt:
+        if t.source == "sc":
+            try:
+                likes = self._sc_likes_set()
+                if self.now is t:
+                    self.liked[t.video_id] = t.video_id in likes
+            except Exception:
+                pass
+            return
+        if not self.yt:
             return
         try:
             data = self.yt.get_watch_playlist(videoId=t.video_id, limit=1)
@@ -205,9 +213,40 @@ class App:
         except Exception:
             pass
 
+    def _sc_likes_set(self, force=False):
+        """Permalinks of the user's soundcloud likes, fetched once and
+        cached so the ♥ state survives without re-hitting api-v2."""
+        if self._sc_likes is not None and not force:
+            return self._sc_likes
+        out = set()
+        try:
+            tok = N.sc_token()
+            if tok:
+                for tr in N.sc_likes(tok):
+                    if getattr(tr, "video_id", ""):
+                        out.add(tr.video_id)
+        except Exception:
+            pass
+        self._sc_likes = out
+        return out
+
     def toggle_like(self):
         t = self.now
-        if not t or t.source == "sc" or not self.yt:
+        if not t:
+            return
+        if t.source == "sc":
+            liked = not self.liked.get(t.video_id, False)
+            self.liked[t.video_id] = liked            # optimistic
+            try:
+                if N.sc_like(t, on=liked):
+                    likes = self._sc_likes_set()
+                    likes.add(t.video_id) if liked else likes.discard(t.video_id)
+                else:
+                    self.liked[t.video_id] = not liked
+            except Exception:
+                self.liked[t.video_id] = not liked
+            return
+        if not self.yt:
             return
         liked = not self.liked.get(t.video_id, False)
         self.liked[t.video_id] = liked
@@ -421,7 +460,8 @@ class H(BaseHTTPRequestHandler):
                                      and APP._aligning == APP.now.video_id),
                     "repeat": APP.repeat, "shuffle": APP.shuffle,
                     "liked": bool(APP.now and APP.liked.get(APP.now.video_id)),
-                    "likeable": bool(APP.now and APP.now.source == "yt"),
+                    "likeable": bool(APP.now and (APP.now.source == "yt"
+                                 or (APP.now.source == "sc" and N.sc_token()))),
                 })
             elif p == "/api/themes":
                 self._send([{"name": t[0], "red": list(t[1]),

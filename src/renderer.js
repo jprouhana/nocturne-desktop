@@ -62,10 +62,15 @@ function renderList(tracks) {
         <div class="r-title">${esc(t.title)}${badge}</div>
         <div class="r-sub">${esc(t.artist)}${t.album ? " · " + esc(t.album) : ""}</div>
       </div>
-      <div class="r-dur">${esc(t.duration || "")}</div>`;
+      <div style="display:flex;align-items:center;gap:6px">
+        <button class="r-add" title="add to queue">＋</button>
+        <span class="r-dur">${esc(t.duration || "")}</span>
+      </div>`;
     row.addEventListener("dblclick", () => playFrom(i));
-    row.addEventListener("click", (e) => {
-      if (e.detail === 1) row.classList.add("sel");
+    row.querySelector(".r-add").addEventListener("click", (e) => {
+      e.stopPropagation();
+      post("/enqueue", { tracks: [t] });
+      toast("added to queue: " + t.title);
     });
     list.appendChild(row);
   });
@@ -261,13 +266,78 @@ let lyricLines = null,
   lyricVid = null,
   lyricEls = [],
   lastCur = -1;
-$("#lyrics-btn").addEventListener("click", () => {
-  lyricsOpen = !lyricsOpen;
-  $("#lyrics-btn").classList.toggle("active", lyricsOpen);
-  $("#lyrics-pane").classList.toggle("hidden", !lyricsOpen);
-  $("#main").style.display = lyricsOpen ? "none" : "flex";
-  if (lyricsOpen) refreshLyrics(true);
+// ── panels (only one of main / lyrics / queue visible) ─────────────────────
+let panel = "main";
+function setPanel(p) {
+  panel = p;
+  $("#main").style.display = p === "main" ? "flex" : "none";
+  $("#lyrics-pane").classList.toggle("hidden", p !== "lyrics");
+  $("#queue-pane").classList.toggle("hidden", p !== "queue");
+  $("#lyrics-btn").classList.toggle("active", p === "lyrics");
+  $("#queue-btn").classList.toggle("active", p === "queue");
+  lyricsOpen = p === "lyrics";
+  if (p === "lyrics") refreshLyrics(true);
+  if (p === "queue") loadQueue();
+}
+$("#lyrics-btn").addEventListener("click", () =>
+  setPanel(panel === "lyrics" ? "main" : "lyrics"));
+$("#queue-btn").addEventListener("click", () =>
+  setPanel(panel === "queue" ? "main" : "queue"));
+
+// ── queue panel ────────────────────────────────────────────────────────────
+function loadQueue() {
+  api("/queue").then((q) => {
+    const box = $("#queue-list");
+    box.innerHTML = "";
+    if (!q || !q.length) {
+      box.innerHTML = `<div class="empty">queue is empty</div>`;
+      return;
+    }
+    q.forEach((t, i) => {
+      const d = document.createElement("div");
+      d.className = "q-row" + (t.video_id === nowId ? " playing" : "");
+      d.innerHTML = `<div class="q-idx">${i + 1}</div>
+        <div><div class="q-title">${esc(t.title)}</div>
+        <div class="q-sub">${esc(t.artist)}</div></div>
+        <div class="q-sub">${esc(t.duration || "")}</div>`;
+      d.addEventListener("dblclick", () =>
+        post("/queue_jump", { index: i }).then(() => setTimeout(loadQueue, 350)));
+      box.appendChild(d);
+    });
+  });
+}
+
+// ── themes (the 7 ytm.py palettes) ─────────────────────────────────────────
+let themes = [],
+  themeI = 0;
+function applyTheme(t) {
+  const rgb = (a) => `rgb(${a[0]},${a[1]},${a[2]})`;
+  const r = document.documentElement.style;
+  r.setProperty("--red", rgb(t.red));
+  r.setProperty("--orange", rgb(t.orange));
+  r.setProperty("--pink", rgb(t.pink));
+  r.setProperty("--accent", rgb(t.pink));
+}
+api("/themes").then((ts) => {
+  themes = ts || [];
+  themeI = (+(localStorage.getItem("noct-theme") || 0) || 0) % (themes.length || 1);
+  if (themes.length) applyTheme(themes[themeI]);
 });
+function cycleTheme() {
+  if (!themes.length) return;
+  themeI = (themeI + 1) % themes.length;
+  applyTheme(themes[themeI]);
+  localStorage.setItem("noct-theme", themeI);
+  toast("theme: " + themes[themeI].name);
+}
+
+// ── transport extras (like / shuffle / repeat) ─────────────────────────────
+$("#like").addEventListener("click", () => post("/like"));
+$("#shuffle").addEventListener("click", () => {
+  post("/shuffle").then(() => panel === "queue" && setTimeout(loadQueue, 200));
+  toast("shuffled");
+});
+$("#repeat").addEventListener("click", () => post("/repeat"));
 function refreshLyrics(force) {
   if (!nowId) return;
   if (!force && lyricVid === nowId) return;
@@ -350,8 +420,12 @@ function poll() {
       $("#np-artist").textContent = n ? n.artist : "";
       const art = n && n.thumb ? n.thumb : "";
       if ($("#np-art").src !== art) $("#np-art").src = art;
-      if (lyricsOpen)
+      if (lyricsOpen) {
         $("#lyrics-art").style.backgroundImage = art ? `url("${art}")` : "";
+        $("#lyrics-title").textContent = n ? n.title : "";
+        $("#lyrics-artist").textContent = n ? n.artist : "";
+      }
+      connLost = false;
       // transport
       lastDur = s.dur || 0;
       $("#toggle").textContent = s.paused || !n ? "▶" : "⏸";
@@ -361,23 +435,54 @@ function poll() {
       $("#bar-fill").style.width = s.dur ? (s.pos / s.dur) * 100 + "%" : "0";
       $("#vol-fill").style.width = (s.volume || 0) + "%";
       alignBtn.style.color = s.aligning ? "var(--orange)" : "";
+      // like / shuffle / repeat reflect backend truth
+      const like = $("#like");
+      like.classList.toggle("hidden", !s.likeable);
+      like.classList.toggle("liked", !!s.liked);
+      like.textContent = s.liked ? "♥" : "♡";
+      $("#shuffle").classList.toggle("on", !!s.shuffle);
+      const rep = $("#repeat");
+      rep.classList.toggle("on", s.repeat > 0);
+      rep.innerHTML = "🔁" + (s.repeat === 2 ? '<span class="badge">1</span>' : "");
+      rep.title = ["repeat off", "repeat all", "repeat one"][s.repeat] || "repeat";
       updateLyricHighlight(s.pos, s.dur);
     })
-    .catch(() => {})
+    .catch(() => {
+      if (!connLost) {
+        connLost = true;
+        toast("backend unreachable — is it running?");
+      }
+    })
     .finally(() => setTimeout(poll, 250));
 }
+let connLost = false;
+
+// ── volume persistence ───────────────────────────────────────────────────────
+const savedVol = localStorage.getItem("noct-vol");
+if (savedVol !== null) post("/volume", { volume: +savedVol });
+$("#vol").addEventListener("click", (e) => {
+  const r = e.currentTarget.getBoundingClientRect();
+  const v = Math.round(Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * 100);
+  localStorage.setItem("noct-vol", v);
+});
 
 // ── boot ─────────────────────────────────────────────────────────────────────
 loadPlaylists();
 setView("search");
 poll();
 
-// media keys
+// keys
 document.addEventListener("keydown", (e) => {
   if (e.target.tagName === "INPUT") return;
+  const k = e.key.toLowerCase();
   if (e.code === "Space") { e.preventDefault(); post("/toggle"); }
   else if (e.key === "ArrowRight" && e.shiftKey) post("/next");
   else if (e.key === "ArrowLeft" && e.shiftKey) post("/prev");
-  else if (e.key.toLowerCase() === "l") $("#lyrics-btn").click();
-  else if (e.key.toLowerCase() === "v") toggleViz();
+  else if (k === "l") setPanel(panel === "lyrics" ? "main" : "lyrics");
+  else if (k === "q") setPanel(panel === "queue" ? "main" : "queue");
+  else if (k === "v") toggleViz();
+  else if (k === "c") cycleTheme();
+  else if (k === "r") post("/repeat");
+  else if (k === "s") { post("/shuffle"); toast("shuffled"); }
+  else if (k === "y") post("/like");
 });

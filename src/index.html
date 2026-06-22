@@ -30,9 +30,19 @@
       <canvas id="viz" class="viz hidden"></canvas>
     </main>
 
-    <!-- lyrics overlay -->
+    <!-- queue panel -->
+    <section id="queue-pane" class="queue-pane hidden">
+      <div class="queue-head">UP NEXT</div>
+      <div id="queue-list" class="queue-list"></div>
+    </section>
+
+    <!-- lyrics / now-playing overlay -->
     <section id="lyrics-pane" class="lyrics-pane hidden">
       <div id="lyrics-art" class="lyrics-art"></div>
+      <div class="lyrics-np">
+        <div id="lyrics-title" class="lyrics-title"></div>
+        <div id="lyrics-artist" class="lyrics-artist"></div>
+      </div>
       <div id="lyrics-scroll" class="lyrics-scroll"></div>
     </section>
 
@@ -44,13 +54,16 @@
           <div id="np-title" class="np-title">—</div>
           <div id="np-artist" class="np-artist"></div>
         </div>
+        <button id="like" class="like" title="like (Y)">♡</button>
       </div>
 
       <div class="controls">
         <div class="buttons">
+          <button id="shuffle" title="shuffle (s)">🔀</button>
           <button id="prev" title="previous">⏮</button>
           <button id="toggle" class="play" title="play/pause">▶</button>
           <button id="next" title="next">⏭</button>
+          <button id="repeat" title="repeat (r)">🔁</button>
         </div>
         <div class="seek">
           <span id="t-cur" class="time">0:00</span>
@@ -60,6 +73,7 @@
       </div>
 
       <div class="right">
+        <button id="queue-btn" title="queue (q)">queue</button>
         <button id="lyrics-btn" title="lyrics">lyrics</button>
         <span class="vol-ico">🔊</span>
         <div id="vol" class="vol"><div id="vol-fill" class="vol-fill"></div></div>

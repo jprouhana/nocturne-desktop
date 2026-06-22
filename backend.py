@@ -89,6 +89,9 @@ class App:
         self.queue = []          # list[Track]
         self.qpos = -1
         self.now = None
+        self.repeat = 0          # 0 off · 1 all · 2 one
+        self.shuffle = False
+        self.liked = {}          # video_id -> bool
         self._lyrics = {}        # vid -> [(sec,line)] | [] | "..."
         self._aligning = None
         self._url_cache = {}
@@ -101,8 +104,13 @@ class App:
 
     # ── playback ─────────────────────────────────────────────────────────
     def _on_eof(self):
-        if self.qpos + 1 < len(self.queue):
+        if self.repeat == 2:                       # loop one
+            self.player.seek_to(0)
+            self.player.cmd("set_property", "pause", False)
+        elif self.qpos + 1 < len(self.queue):
             self.play_at(self.qpos + 1)
+        elif self.repeat == 1 and self.queue:      # repeat all → wrap
+            self.play_at(0)
 
     def play_at(self, idx):
         if not (0 <= idx < len(self.queue)):
@@ -115,6 +123,49 @@ class App:
             threading.Thread(target=self._sc_resolve, args=(t,), daemon=True).start()
         else:
             self.player.play_video(t.video_id)
+        threading.Thread(target=self._fetch_liked, args=(t,), daemon=True).start()
+
+    def _fetch_liked(self, t):
+        if t.source == "sc" or not self.yt:
+            return
+        try:
+            data = self.yt.get_watch_playlist(videoId=t.video_id, limit=1)
+            tr = (data.get("tracks") or [{}])[0]
+            if self.now is t:
+                self.liked[t.video_id] = tr.get("likeStatus") == "LIKE"
+        except Exception:
+            pass
+
+    def toggle_like(self):
+        t = self.now
+        if not t or t.source == "sc" or not self.yt:
+            return
+        liked = not self.liked.get(t.video_id, False)
+        self.liked[t.video_id] = liked
+        try:
+            self.yt.rate_song(t.video_id, "LIKE" if liked else "INDIFFERENT")
+        except Exception:
+            self.liked[t.video_id] = not liked
+
+    def do_shuffle(self):
+        import random
+        if len(self.queue) <= 2:
+            return
+        cur = self.now
+        rest = [t for i, t in enumerate(self.queue) if i != self.qpos]
+        random.shuffle(rest)
+        self.queue = ([cur] if cur else []) + rest
+        self.qpos = 0
+        self.shuffle = True
+
+    def add_to_playlist(self, video_id, playlist_id):
+        if not self.yt:
+            return False
+        try:
+            self.yt.add_playlist_items(playlist_id, [video_id], duplicates=True)
+            return True
+        except Exception:
+            return False
 
     def _sc_resolve(self, t):
         try:
@@ -296,7 +347,14 @@ class H(BaseHTTPRequestHandler):
                     "qpos": APP.qpos, "queue_len": len(APP.queue),
                     "aligning": bool(APP._aligning and APP.now
                                      and APP._aligning == APP.now.video_id),
+                    "repeat": APP.repeat, "shuffle": APP.shuffle,
+                    "liked": bool(APP.now and APP.liked.get(APP.now.video_id)),
+                    "likeable": bool(APP.now and APP.now.source == "yt"),
                 })
+            elif p == "/api/themes":
+                self._send([{"name": t[0], "red": list(t[1]),
+                             "orange": list(t[2]), "pink": list(t[3])}
+                            for t in N.THEMES])
             elif p == "/api/queue":
                 self._send([track_json(t) for t in APP.queue])
             elif p == "/api/spectrum":
@@ -419,6 +477,21 @@ class H(BaseHTTPRequestHandler):
                 if APP.now:
                     APP.align(APP.now)
                 self._send({"ok": True})
+            elif p == "/api/like":
+                APP.toggle_like()
+                self._send({"liked": bool(APP.now and APP.liked.get(APP.now.video_id))})
+            elif p == "/api/repeat":
+                APP.repeat = int(b.get("mode", (APP.repeat + 1) % 3)) % 3
+                self._send({"repeat": APP.repeat})
+            elif p == "/api/shuffle":
+                APP.do_shuffle()
+                self._send({"ok": True})
+            elif p == "/api/queue_jump":
+                APP.play_at(int(b.get("index", 0)))
+                self._send({"ok": True})
+            elif p == "/api/add_to_playlist":
+                ok = APP.add_to_playlist(b.get("video_id", ""), b.get("playlist_id", ""))
+                self._send({"ok": ok})
             else:
                 self._send({"error": "not found"}, 404)
         except Exception as e:

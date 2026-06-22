@@ -14,9 +14,34 @@ let backend = null;
 app.commandLine.appendSwitch("ozone-platform-hint", "auto");
 app.commandLine.appendSwitch("enable-features", "WaylandWindowDecorations");
 
+// the desktop app reuses the terminal app's venv + ytm.py. find its python
+// across platforms; NOCTURNE_PY / NOCTURNE_YTM env vars override.
 function venvPython() {
-  const p = path.join(process.env.HOME, "ytm-tui", ".venv", "bin", "python");
-  return fs.existsSync(p) ? p : "python3";
+  if (process.env.NOCTURNE_PY) return process.env.NOCTURNE_PY;
+  const home = process.env.HOME || process.env.USERPROFILE || "";
+  const cands = [
+    path.join(home, "ytm-tui", ".venv", "bin", "python"), // linux/mac
+    path.join(home, "ytm-tui", ".venv", "Scripts", "python.exe"), // windows
+  ];
+  for (const c of cands) if (fs.existsSync(c)) return c;
+  return process.platform === "win32" ? "python" : "python3";
+}
+
+// remember window size/position between launches
+function statePath() {
+  return path.join(app.getPath("userData"), "window.json");
+}
+function loadBounds() {
+  try {
+    return JSON.parse(fs.readFileSync(statePath(), "utf8"));
+  } catch (e) {
+    return null;
+  }
+}
+function saveBounds(win) {
+  try {
+    fs.writeFileSync(statePath(), JSON.stringify(win.getBounds()));
+  } catch (e) {}
 }
 
 function startBackend() {
@@ -40,9 +65,12 @@ function waitForBackend(cb, tries = 0) {
 }
 
 function createWindow() {
+  const b = loadBounds();
   const win = new BrowserWindow({
-    width: 1240,
-    height: 820,
+    width: (b && b.width) || 1240,
+    height: (b && b.height) || 820,
+    x: b && b.x,
+    y: b && b.y,
     minWidth: 920,
     minHeight: 600,
     backgroundColor: "#08080d",
@@ -51,6 +79,7 @@ function createWindow() {
     webPreferences: { contextIsolation: true },
   });
   win.setMenuBarVisibility(false);
+  ["resize", "move"].forEach((ev) => win.on(ev, () => saveBounds(win)));
   win.loadFile(path.join(__dirname, "src", "index.html"), {
     hash: String(PORT),
   });

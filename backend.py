@@ -27,6 +27,14 @@ except SystemExit:
     pass
 
 PORT = int(os.environ.get("NOCTURNE_PORT", "8770"))
+QSTATE = os.path.expanduser("~/.config/nocturne-desktop/queue.json")
+
+
+def _mk(d):
+    return N.Track(d.get("video_id", ""), d.get("title", "?"),
+                   d.get("artist", ""), d.get("album", ""),
+                   d.get("duration", ""), d.get("thumb", ""), "", "",
+                   d.get("video_type", ""))
 
 
 # ── lyrics pipeline (mirrors ytm.py's App._get_lyrics, sans the TUI) ─────────
@@ -101,6 +109,66 @@ class App:
             self.spectrum.start()
         except Exception as e:
             print("spectrum tap failed:", e, file=sys.stderr)
+        self._restore_queue()
+
+    # ── queue persistence ─────────────────────────────────────────────────
+    def _t2d(self, t):
+        return {"video_id": t.video_id, "title": t.title, "artist": t.artist,
+                "album": t.album, "duration": t.duration, "thumb": t.thumb,
+                "video_type": getattr(t, "video_type", "")}
+
+    def _save_queue(self):
+        try:
+            os.makedirs(os.path.dirname(QSTATE), exist_ok=True)
+            with open(QSTATE, "w") as f:
+                json.dump({"qpos": self.qpos,
+                           "queue": [self._t2d(t) for t in self.queue]}, f)
+        except Exception:
+            pass
+
+    def _restore_queue(self):
+        try:
+            with open(QSTATE) as f:
+                data = json.load(f)
+        except (OSError, ValueError):
+            return
+        self.queue = [_mk(d) for d in data.get("queue", [])]
+        self.qpos = data.get("qpos", -1)
+        if 0 <= self.qpos < len(self.queue):
+            self.now = self.queue[self.qpos]
+            self.play_at(self.qpos)                # resume the last track…
+            self.player.cmd("set_property", "pause", True)   # …but paused
+
+    def queue_remove(self, idx):
+        if not (0 <= idx < len(self.queue)):
+            return
+        del self.queue[idx]
+        if idx < self.qpos:
+            self.qpos -= 1
+        elif idx == self.qpos:
+            if self.qpos < len(self.queue):
+                self.play_at(self.qpos)
+            elif self.queue:
+                self.play_at(len(self.queue) - 1)
+            else:
+                self.qpos = -1
+                self.now = None
+                self.player.stop()
+        self._save_queue()
+
+    def queue_move(self, idx, to):
+        n = len(self.queue)
+        if not (0 <= idx < n and 0 <= to < n) or idx == to:
+            return
+        t = self.queue.pop(idx)
+        self.queue.insert(to, t)
+        if idx == self.qpos:
+            self.qpos = to
+        elif idx < self.qpos <= to:
+            self.qpos -= 1
+        elif to <= self.qpos < idx:
+            self.qpos += 1
+        self._save_queue()
 
     # ── playback ─────────────────────────────────────────────────────────
     def _on_eof(self):
@@ -124,6 +192,7 @@ class App:
         else:
             self.player.play_video(t.video_id)
         threading.Thread(target=self._fetch_liked, args=(t,), daemon=True).start()
+        self._save_queue()
 
     def _fetch_liked(self, t):
         if t.source == "sc" or not self.yt:
@@ -177,13 +246,16 @@ class App:
 
     def set_queue(self, tracks, index=0):
         self.queue = tracks
+        self.shuffle = False
         if tracks:
             self.play_at(max(0, min(index, len(tracks) - 1)))
+        self._save_queue()
 
     def enqueue(self, tracks):
         self.queue.extend(tracks)
-        if self.qpos < 0:
+        if self.qpos < 0 and self.queue:
             self.play_at(0)
+        self._save_queue()
 
     def next(self):
         self._on_eof()
@@ -489,6 +561,12 @@ class H(BaseHTTPRequestHandler):
             elif p == "/api/queue_jump":
                 APP.play_at(int(b.get("index", 0)))
                 self._send({"ok": True})
+            elif p == "/api/queue_remove":
+                APP.queue_remove(int(b.get("index", -1)))
+                self._send({"ok": True})
+            elif p == "/api/queue_move":
+                APP.queue_move(int(b.get("index", -1)), int(b.get("to", -1)))
+                self._send({"ok": True})
             elif p == "/api/add_to_playlist":
                 ok = APP.add_to_playlist(b.get("video_id", ""), b.get("playlist_id", ""))
                 self._send({"ok": ok})
@@ -496,13 +574,6 @@ class H(BaseHTTPRequestHandler):
                 self._send({"error": "not found"}, 404)
         except Exception as e:
             self._send({"error": str(e)}, 500)
-
-
-def _mk(d):
-    return N.Track(d.get("video_id", ""), d.get("title", "?"),
-                   d.get("artist", ""), d.get("album", ""),
-                   d.get("duration", ""), d.get("thumb", ""), "", "",
-                   d.get("video_type", ""))
 
 
 def main():

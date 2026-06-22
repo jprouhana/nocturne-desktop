@@ -19,6 +19,10 @@ const fmt = (s) => {
 let curList = []; // tracks shown in the main list (becomes the play queue)
 let nowId = null;
 let view = "search";
+let playingNow = false; // a track is loaded AND not paused (for viz help)
+let srcFilter = "all"; // search source lens: all | yt | sc
+let lastYt = [],
+  lastSc = []; // raw search results by source
 
 // ── add an align button into the player bar (next to lyrics) ───────────────
 const alignBtn = document.createElement("button");
@@ -67,6 +71,10 @@ function renderList(tracks) {
         <span class="r-dur">${esc(t.duration || "")}</span>
       </div>`;
     row.addEventListener("dblclick", () => playFrom(i));
+    row.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      showCtx(e.clientX, e.clientY, t);
+    });
     row.querySelector(".r-add").addEventListener("click", (e) => {
       e.stopPropagation();
       post("/enqueue", { tracks: [t] });
@@ -80,6 +88,56 @@ const esc = (s) =>
 
 function playFrom(index) {
   post("/play", { tracks: curList, index });
+}
+
+// ── right-click context menu (play / queue / add to playlist) ──────────────
+let playlistsData = [];
+let ctxEl = null;
+function closeCtx() {
+  if (ctxEl) ctxEl.remove();
+  ctxEl = null;
+}
+document.addEventListener("click", closeCtx);
+document.addEventListener("scroll", closeCtx, true);
+function showCtx(x, y, track) {
+  closeCtx();
+  const m = document.createElement("div");
+  m.className = "ctx";
+  const item = (label, fn, cls) => {
+    const d = document.createElement("div");
+    d.className = "ctx-item" + (cls ? " " + cls : "");
+    d.textContent = label;
+    d.addEventListener("click", (e) => {
+      e.stopPropagation();
+      fn();
+      closeCtx();
+    });
+    return d;
+  };
+  m.appendChild(item("▶  Play", () => post("/play", { video_id: track.video_id, ...track })));
+  m.appendChild(item("＋  Add to queue", () => {
+    post("/enqueue", { tracks: [track] });
+    toast("added to queue");
+  }));
+  if (track.source !== "sc" && playlistsData.length) {
+    const head = document.createElement("div");
+    head.className = "ctx-head";
+    head.textContent = "ADD TO PLAYLIST";
+    m.appendChild(head);
+    const sub = document.createElement("div");
+    sub.className = "ctx-sub";
+    playlistsData.forEach((pl) =>
+      sub.appendChild(item(pl.title, () => {
+        post("/add_to_playlist", { video_id: track.video_id, playlist_id: pl.id }).then((r) =>
+          r.json().then((j) => toast(j.ok ? "added to " + pl.title : "couldn't add")));
+      })));
+    m.appendChild(sub);
+  }
+  document.body.appendChild(m);
+  const r = m.getBoundingClientRect();
+  m.style.left = Math.min(x, window.innerWidth - r.width - 8) + "px";
+  m.style.top = Math.min(y, window.innerHeight - r.height - 8) + "px";
+  ctxEl = m;
 }
 
 // ── views ──────────────────────────────────────────────────────────────────
@@ -112,21 +170,39 @@ $("#search-input").addEventListener("keydown", (e) => {
     doSearch(e.target.value.trim());
   }
 });
+function applyFilter() {
+  const list =
+    srcFilter === "yt" ? lastYt : srcFilter === "sc" ? lastSc : lastYt.concat(lastSc);
+  renderList(list);
+}
+function setFilter(f) {
+  srcFilter = f;
+  document.querySelectorAll(".srcf").forEach((b) =>
+    b.classList.toggle("on", b.dataset.f === f));
+  applyFilter();
+}
 function doSearch(q) {
   if (!q) return;
+  lastYt = [];
+  lastSc = [];
   $("#list").innerHTML = `<div class="empty">searching…</div>`;
   api("/search?q=" + encodeURIComponent(q)).then((yt) => {
-    renderList(yt);
-    // fold in SoundCloud a beat later
+    lastYt = yt || [];
+    if (view === "search") applyFilter();
     api("/sc_search?q=" + encodeURIComponent(q)).then((sc) => {
-      if (sc && sc.length && view === "search") renderList(yt.concat(sc));
+      lastSc = sc || [];
+      if (view === "search") applyFilter();
     });
   });
 }
 
 // playlists
+document.querySelectorAll(".srcf").forEach((b) =>
+  b.addEventListener("click", () => setFilter(b.dataset.f)));
+
 function loadPlaylists() {
   api("/playlists").then((pls) => {
+    playlistsData = pls || [];
     const box = $("#playlists");
     box.innerHTML = "";
     (pls || []).forEach((pl) => {
@@ -149,16 +225,36 @@ function loadPlaylists() {
 $("#toggle").addEventListener("click", () => post("/toggle"));
 $("#next").addEventListener("click", () => post("/next"));
 $("#prev").addEventListener("click", () => post("/prev"));
-$("#bar").addEventListener("click", (e) => {
-  const r = e.currentTarget.getBoundingClientRect();
-  if (lastDur > 0) post("/seek", { pos: ((e.clientX - r.left) / r.width) * lastDur });
-});
-$("#vol").addEventListener("click", (e) => {
-  const r = e.currentTarget.getBoundingClientRect();
-  const v = Math.round(Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * 100);
-  $("#vol-fill").style.width = v + "%";
-  post("/volume", { volume: v });
-});
+// draggable seek + volume (mousedown + drag, not just click)
+let seekingNow = false;
+const frac = (el, e) => {
+  const r = el.getBoundingClientRect();
+  return Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+};
+(() => {
+  const el = $("#bar");
+  const show = (f) => ($("#bar-fill").style.width = f * 100 + "%");
+  el.addEventListener("mousedown", (e) => { seekingNow = true; show(frac(el, e)); });
+  window.addEventListener("mousemove", (e) => { if (seekingNow) show(frac(el, e)); });
+  window.addEventListener("mouseup", (e) => {
+    if (!seekingNow) return;
+    seekingNow = false;
+    if (lastDur > 0) post("/seek", { pos: frac(el, e) * lastDur });
+  });
+})();
+(() => {
+  const el = $("#vol");
+  let drag = false;
+  const apply = (e) => {
+    const v = Math.round(frac(el, e) * 100);
+    $("#vol-fill").style.width = v + "%";
+    post("/volume", { volume: v });
+    localStorage.setItem("noct-vol", v);
+  };
+  el.addEventListener("mousedown", (e) => { drag = true; apply(e); });
+  window.addEventListener("mousemove", (e) => { if (drag) apply(e); });
+  window.addEventListener("mouseup", () => (drag = false));
+})();
 alignBtn.addEventListener("click", () => {
   post("/align");
   toast("⟁ aligning lyrics to this audio — ~15s");
@@ -193,6 +289,8 @@ function toggleViz() {
     vizLoop();
   } else {
     cancelAnimationFrame(vizRAF);
+    showVizHelp(false);
+    vizFlatSince = 0;
   }
 }
 vizBtn.addEventListener("click", toggleViz);
@@ -207,6 +305,40 @@ window.addEventListener("resize", () => {
   if (vizOn) sizeViz();
 });
 
+let vizProducing = false,
+  vizFlatSince = 0,
+  vizHelpEl = null;
+function vizHelp() {
+  const p = navigator.platform || "";
+  if (p.includes("Mac"))
+    return { os: "macOS", cmd: "brew install blackhole-2ch",
+      note: "then route output through a Multi-Output Device (speakers + BlackHole) in System Settings → Sound." };
+  if (p.includes("Win"))
+    return { os: "Windows", cmd: "install VB-CABLE  (vb-audio.com/Cable)",
+      note: "set it as your output device so the spectrum can read it." };
+  return { os: "Linux", cmd: "pactl list short sources | grep monitor",
+    note: "the visualizer reads your output's monitor automatically — make sure PipeWire/PulseAudio is running and a track is playing." };
+}
+function showVizHelp(on) {
+  if (on && !vizHelpEl) {
+    const h = vizHelp();
+    vizHelpEl = document.createElement("div");
+    vizHelpEl.className = "viz-help";
+    vizHelpEl.innerHTML =
+      `<div class="vh-title">🔇 no audio captured</div>
+       <div class="vh-note">${h.os}: ${h.note}</div>
+       <div class="vh-cmd" title="click to copy">${h.cmd}</div>`;
+    vizHelpEl.querySelector(".vh-cmd").addEventListener("click", () => {
+      if (navigator.clipboard) navigator.clipboard.writeText(h.cmd);
+      toast("command copied");
+    });
+    $("#main").appendChild(vizHelpEl);
+  } else if (!on && vizHelpEl) {
+    vizHelpEl.remove();
+    vizHelpEl = null;
+  }
+}
+
 function vizLoop() {
   if (!vizOn) return;
   const now = performance.now();
@@ -215,8 +347,17 @@ function vizLoop() {
     api("/spectrum?n=" + NBARS)
       .then((d) => {
         vizLevels = d.levels || [];
+        vizProducing = !!d.producing;
       })
       .catch(() => {});
+  }
+  // a track is playing but nothing is being captured → offer to enable it
+  if (playingNow && !vizProducing) {
+    if (!vizFlatSince) vizFlatSince = now;
+    if (now - vizFlatSince > 2500) showVizHelp(true);
+  } else {
+    vizFlatSince = 0;
+    showVizHelp(false);
   }
   drawViz();
   vizRAF = requestAnimationFrame(vizLoop);
@@ -299,9 +440,22 @@ function loadQueue() {
       d.innerHTML = `<div class="q-idx">${i + 1}</div>
         <div><div class="q-title">${esc(t.title)}</div>
         <div class="q-sub">${esc(t.artist)}</div></div>
-        <div class="q-sub">${esc(t.duration || "")}</div>`;
+        <div class="q-actions">
+          <button class="q-btn" data-a="up" title="move up">↑</button>
+          <button class="q-btn" data-a="down" title="move down">↓</button>
+          <button class="q-btn q-del" data-a="del" title="remove">✕</button>
+        </div>`;
       d.addEventListener("dblclick", () =>
-        post("/queue_jump", { index: i }).then(() => setTimeout(loadQueue, 350)));
+        post("/queue_jump", { index: i }).then(() => setTimeout(loadQueue, 300)));
+      const refresh = () => setTimeout(loadQueue, 200);
+      d.querySelectorAll(".q-btn").forEach((b) =>
+        b.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const a = b.dataset.a;
+          if (a === "del") post("/queue_remove", { index: i }).then(refresh);
+          else if (a === "up" && i > 0) post("/queue_move", { index: i, to: i - 1 }).then(refresh);
+          else if (a === "down" && i < q.length - 1) post("/queue_move", { index: i, to: i + 1 }).then(refresh);
+        }));
       box.appendChild(d);
     });
   });
@@ -432,7 +586,8 @@ function poll() {
       $("#toggle").style.paddingLeft = s.paused || !n ? "2px" : "0";
       $("#t-cur").textContent = fmt(s.pos);
       $("#t-dur").textContent = fmt(s.dur);
-      $("#bar-fill").style.width = s.dur ? (s.pos / s.dur) * 100 + "%" : "0";
+      if (!seekingNow)
+        $("#bar-fill").style.width = s.dur ? (s.pos / s.dur) * 100 + "%" : "0";
       $("#vol-fill").style.width = (s.volume || 0) + "%";
       alignBtn.style.color = s.aligning ? "var(--orange)" : "";
       // like / shuffle / repeat reflect backend truth
@@ -440,6 +595,7 @@ function poll() {
       like.classList.toggle("hidden", !s.likeable);
       like.classList.toggle("liked", !!s.liked);
       like.textContent = s.liked ? "♥" : "♡";
+      playingNow = !!(n && !s.paused);
       $("#shuffle").classList.toggle("on", !!s.shuffle);
       const rep = $("#repeat");
       rep.classList.toggle("on", s.repeat > 0);
@@ -457,14 +613,9 @@ function poll() {
 }
 let connLost = false;
 
-// ── volume persistence ───────────────────────────────────────────────────────
+// ── volume persistence (restore last volume on boot) ───────────────────────
 const savedVol = localStorage.getItem("noct-vol");
 if (savedVol !== null) post("/volume", { volume: +savedVol });
-$("#vol").addEventListener("click", (e) => {
-  const r = e.currentTarget.getBoundingClientRect();
-  const v = Math.round(Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * 100);
-  localStorage.setItem("noct-vol", v);
-});
 
 // ── boot ─────────────────────────────────────────────────────────────────────
 loadPlaylists();

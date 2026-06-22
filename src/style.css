@@ -201,6 +201,51 @@ nav { display: flex; flex-direction: column; gap: 3px; }
 .q-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .q-sub { color: var(--grey); font-size: 11px; }
 
+/* search source filter */
+.searchbar { display: flex; gap: 10px; align-items: center; }
+.searchbar input { flex: 1; }
+.srcfilters { display: flex; gap: 4px; }
+.srcf {
+  padding: 7px 11px; border-radius: 8px; color: var(--grey); font-weight: 600;
+  font-size: 12px; background: var(--panel); transition: .1s;
+}
+.srcf:hover { color: var(--text); }
+.srcf.on { color: #08080d; background: var(--accent); }
+
+/* right-click context menu */
+.ctx {
+  position: fixed; z-index: 20; background: var(--panel); border: 1px solid var(--line);
+  border-radius: 10px; padding: 5px; min-width: 180px; box-shadow: 0 10px 34px #000b;
+}
+.ctx-item {
+  padding: 8px 12px; border-radius: 7px; cursor: pointer; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.ctx-item:hover { background: var(--bg2); color: var(--accent); }
+.ctx-head { color: var(--dgrey); font-size: 10px; letter-spacing: 1px; padding: 8px 12px 4px; }
+.ctx-sub { max-height: 220px; overflow-y: auto; }
+
+/* queue row actions */
+.q-actions { display: flex; align-items: center; gap: 2px; opacity: 0; transition: .1s; }
+.q-row:hover .q-actions { opacity: 1; }
+.q-btn { color: var(--grey); padding: 3px 6px; border-radius: 6px; font-size: 13px; }
+.q-btn:hover { color: var(--text); background: var(--panel); }
+.q-del:hover { color: var(--red); }
+
+/* visualizer enable help */
+.viz-help {
+  position: absolute; z-index: 5; left: 50%; bottom: 40px; transform: translateX(-50%);
+  background: rgba(20,20,31,.92); border: 1px solid var(--line); border-radius: 12px;
+  padding: 16px 20px; text-align: center; max-width: 460px; box-shadow: 0 8px 30px #000a;
+}
+.vh-title { font-weight: 700; margin-bottom: 6px; }
+.vh-note { color: var(--grey); font-size: 12px; line-height: 1.5; margin-bottom: 10px; }
+.vh-cmd {
+  font-family: inherit; background: var(--bg); border: 1px solid var(--line);
+  color: var(--orange); padding: 8px 12px; border-radius: 8px; cursor: pointer; font-size: 12px;
+}
+.vh-cmd:hover { border-color: var(--accent); }
+
 .toast {
   position: fixed; bottom: 104px; left: 50%; transform: translateX(-50%);
   background: var(--panel); border: 1px solid var(--line); color: var(--text);

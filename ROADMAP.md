@@ -51,3 +51,4 @@ ALL checks pass: check it off `[x]`, append a one-line note to the LOG, and
 - now-playing view: lyrics pane gained a big title/artist header over blurred art.
 - persistence: window bounds (main.js → userData/window.json) + last volume (localStorage); cross-platform venv path.
 - polish: backend-unreachable toast, hover enqueue, ＋ buttons.
+- limitations pass: playlist-picker right-click menu (add_to_playlist), queue remove/reorder + persistence (resumes paused on boot), draggable seek+volume, search source filter (all/YT/☁), visualizer enable-help overlay (OS-specific command, click-to-copy).

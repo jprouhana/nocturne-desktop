@@ -230,30 +230,102 @@ class App:
         self._sc_likes = out
         return out
 
+    def _sc_write_cookies(self):
+        """SoundCloud guards its WRITE endpoints (like/unlike) with DataDome
+        bot-protection — the OAuth header alone gets a 403 CAPTCHA. The user's
+        browser already solved the JS challenge, so we lift its `datadome`
+        cookie (plus the session) to ride through. Read endpoints don't need
+        this; only writes do."""
+        import sqlite3
+        import shutil
+        import tempfile
+        ck = {}
+        try:
+            dbs = N.firefox_cookie_dbs()
+            if not dbs:
+                return ""
+            with tempfile.TemporaryDirectory() as td:
+                tmp = os.path.join(td, "c.sqlite")
+                shutil.copy(dbs[0], tmp)
+                c = sqlite3.connect(tmp)
+                for n, v in c.execute(
+                        "SELECT name,value FROM moz_cookies WHERE host LIKE "
+                        "'%soundcloud%' AND name IN "
+                        "('datadome','oauth_token','_soundcloud_session')"):
+                    ck[n] = v
+                c.close()
+        except Exception:
+            return ""
+        return "; ".join(f"{k}={v}" for k, v in ck.items())
+
+    def _sc_like_write(self, track, on):
+        """Like/unlike on the soundcloud side, DataDome-aware (the module's
+        N.sc_like omits the browser cookie and 403s). Returns True on a 2xx."""
+        import urllib.request
+        import urllib.parse
+        tok = N.sc_token()
+        if not tok:
+            return False
+        try:
+            cid = N._sc_client_id()
+            uid = N._sc_uid(tok)
+            tr = N._sc_get("https://api-v2.soundcloud.com/resolve?url="
+                           + urllib.parse.quote(track.video_id, safe="")
+                           + f"&client_id={cid}", tok)
+            tid = tr["id"]
+            headers = {
+                "User-Agent": ("Mozilla/5.0 (X11; Linux x86_64) "
+                               "AppleWebKit/537.36 (KHTML, like Gecko) "
+                               "Chrome/120.0 Safari/537.36"),
+                "Authorization": f"OAuth {tok}",
+                "Origin": "https://soundcloud.com",
+                "Referer": "https://soundcloud.com/",
+                "Cookie": self._sc_write_cookies(),
+            }
+            url = (f"https://api-v2.soundcloud.com/users/{uid}/track_likes/{tid}"
+                   f"?client_id={cid}&app_locale=en")
+            req = urllib.request.Request(
+                url, method="PUT" if on else "DELETE", headers=headers)
+            with urllib.request.urlopen(req, timeout=15) as r:
+                return 200 <= r.status < 300
+        except Exception:
+            return False
+
     def toggle_like(self):
+        """Returns a small status dict: {ok, liked, blocked, url}. `blocked`
+        is True when SoundCloud's DataDome bot-check rejected the write — the
+        UI then offers to open the track in the browser, where a real session
+        satisfies the challenge."""
         t = self.now
         if not t:
-            return
+            return {"ok": False, "liked": False, "blocked": False, "url": ""}
         if t.source == "sc":
-            liked = not self.liked.get(t.video_id, False)
-            self.liked[t.video_id] = liked            # optimistic
+            want = not self.liked.get(t.video_id, False)
+            self.liked[t.video_id] = want                 # optimistic
+            ok = False
             try:
-                if N.sc_like(t, on=liked):
-                    likes = self._sc_likes_set()
-                    likes.add(t.video_id) if liked else likes.discard(t.video_id)
-                else:
-                    self.liked[t.video_id] = not liked
+                ok = self._sc_like_write(t, want)
             except Exception:
-                self.liked[t.video_id] = not liked
-            return
+                ok = False
+            if ok:
+                likes = self._sc_likes_set()
+                likes.add(t.video_id) if want else likes.discard(t.video_id)
+                return {"ok": True, "liked": want, "blocked": False, "url": ""}
+            self.liked[t.video_id] = not want             # revert
+            return {"ok": False, "liked": not want, "blocked": True,
+                    "url": t.video_id}                     # sc permalink
         if not self.yt:
-            return
+            return {"ok": False, "liked": False, "blocked": False, "url": ""}
         liked = not self.liked.get(t.video_id, False)
         self.liked[t.video_id] = liked
+        ok = True
         try:
             self.yt.rate_song(t.video_id, "LIKE" if liked else "INDIFFERENT")
         except Exception:
             self.liked[t.video_id] = not liked
+            ok = False
+        return {"ok": ok, "liked": self.liked.get(t.video_id, False),
+                "blocked": False, "url": ""}
 
     def do_shuffle(self):
         import random
@@ -590,8 +662,7 @@ class H(BaseHTTPRequestHandler):
                     APP.align(APP.now)
                 self._send({"ok": True})
             elif p == "/api/like":
-                APP.toggle_like()
-                self._send({"liked": bool(APP.now and APP.liked.get(APP.now.video_id))})
+                self._send(APP.toggle_like())
             elif p == "/api/repeat":
                 APP.repeat = int(b.get("mode", (APP.repeat + 1) % 3)) % 3
                 self._send({"repeat": APP.repeat})

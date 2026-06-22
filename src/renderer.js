@@ -486,7 +486,23 @@ function cycleTheme() {
 }
 
 // ── transport extras (like / shuffle / repeat) ─────────────────────────────
-$("#like").addEventListener("click", () => post("/like"));
+$("#like").addEventListener("click", () => {
+  post("/like")
+    .then((r) => r.json())
+    .then((j) => {
+      if (j.blocked && j.url) {
+        // SoundCloud's DataDome bot-check rejected the in-app like; open the
+        // track in the browser, where a real session sails through it.
+        toast("SoundCloud blocked the like — opening in browser to ♥ there");
+        window.open(j.url, "_blank");
+      } else if (j.ok) {
+        toast(j.liked ? "♥ liked" : "♡ unliked");
+      } else if (!j.blocked && !j.ok) {
+        toast("couldn't like this one");
+      }
+    })
+    .catch(() => {});
+});
 $("#shuffle").addEventListener("click", () => {
   post("/shuffle").then(() => panel === "queue" && setTimeout(loadQueue, 200));
   toast("shuffled");

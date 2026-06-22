@@ -78,6 +78,11 @@ nav { display: flex; flex-direction: column; gap: 3px; }
 .searchbar input:focus { border-color: var(--accent); }
 .searchbar.hidden { display: none; }
 .list { flex: 1; overflow-y: auto; padding: 4px 16px 20px; }
+.viz { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.viz.hidden { display: none; }
+#viz-btn { color: var(--grey); font-weight: 600; padding: 6px 10px; border-radius: 7px; }
+#viz-btn:hover { color: var(--text); background: var(--panel); }
+#viz-btn.active { color: var(--accent); }
 
 .row {
   display: grid; grid-template-columns: 38px 1fr auto; gap: 12px;

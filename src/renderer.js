@@ -159,6 +159,101 @@ alignBtn.addEventListener("click", () => {
   toast("⟁ aligning lyrics to this audio — ~15s");
 });
 
+// ── visualizer (live FFT bars off the backend's SpectrumTap) ───────────────
+const vizBtn = document.createElement("button");
+vizBtn.id = "viz-btn";
+vizBtn.title = "visualizer (v)";
+vizBtn.textContent = "viz";
+$(".right").insertBefore(vizBtn, $("#lyrics-btn"));
+
+let vizOn = false,
+  vizRAF = 0,
+  vizFetchT = 0,
+  vizLevels = [],
+  vizSmooth = [];
+const NBARS = 56;
+const vizCanvas = $("#viz");
+const vctx = vizCanvas.getContext("2d");
+
+function cssVar(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+function toggleViz() {
+  vizOn = !vizOn;
+  vizBtn.classList.toggle("active", vizOn);
+  vizCanvas.classList.toggle("hidden", !vizOn);
+  if (vizOn) {
+    sizeViz();
+    vizLoop();
+  } else {
+    cancelAnimationFrame(vizRAF);
+  }
+}
+vizBtn.addEventListener("click", toggleViz);
+
+function sizeViz() {
+  const r = vizCanvas.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  vizCanvas.width = Math.max(1, r.width * dpr);
+  vizCanvas.height = Math.max(1, r.height * dpr);
+}
+window.addEventListener("resize", () => {
+  if (vizOn) sizeViz();
+});
+
+function vizLoop() {
+  if (!vizOn) return;
+  const now = performance.now();
+  if (now - vizFetchT > 45) {
+    vizFetchT = now;
+    api("/spectrum?n=" + NBARS)
+      .then((d) => {
+        vizLevels = d.levels || [];
+      })
+      .catch(() => {});
+  }
+  drawViz();
+  vizRAF = requestAnimationFrame(vizLoop);
+}
+
+function drawViz() {
+  const W = vizCanvas.width,
+    H = vizCanvas.height;
+  vctx.clearRect(0, 0, W, H);
+  if (!vizLevels.length) return;
+  const n = vizLevels.length;
+  if (vizSmooth.length !== n) vizSmooth = new Array(n).fill(0);
+  const pink = cssVar("--pink") || "#ff5e7d";
+  const orange = cssVar("--orange") || "#ff8a29";
+  const grad = vctx.createLinearGradient(0, H, 0, 0);
+  grad.addColorStop(0, pink);
+  grad.addColorStop(1, orange);
+  vctx.fillStyle = grad;
+  const gap = W / n;
+  const bw = gap * 0.62;
+  for (let i = 0; i < n; i++) {
+    // ease toward the latest level; decay a touch slower than attack
+    const t = vizLevels[i] || 0;
+    vizSmooth[i] += (t - vizSmooth[i]) * (t > vizSmooth[i] ? 0.5 : 0.18);
+    const h = Math.max(2, vizSmooth[i] * H * 0.92);
+    const x = i * gap + (gap - bw) / 2;
+    const rad = Math.min(bw / 2, 6);
+    roundBar(x, H - h, bw, h, rad);
+  }
+}
+function roundBar(x, y, w, h, r) {
+  vctx.beginPath();
+  vctx.moveTo(x, y + h);
+  vctx.lineTo(x, y + r);
+  vctx.arcTo(x, y, x + r, y, r);
+  vctx.lineTo(x + w - r, y);
+  vctx.arcTo(x + w, y, x + w, y + r, r);
+  vctx.lineTo(x + w, y + h);
+  vctx.closePath();
+  vctx.fill();
+}
+
 // ── lyrics ─────────────────────────────────────────────────────────────────
 let lyricsOpen = false;
 let lyricLines = null,
@@ -284,4 +379,5 @@ document.addEventListener("keydown", (e) => {
   else if (e.key === "ArrowRight" && e.shiftKey) post("/next");
   else if (e.key === "ArrowLeft" && e.shiftKey) post("/prev");
   else if (e.key.toLowerCase() === "l") $("#lyrics-btn").click();
+  else if (e.key.toLowerCase() === "v") toggleViz();
 });

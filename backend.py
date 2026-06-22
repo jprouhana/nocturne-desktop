@@ -92,6 +92,12 @@ class App:
         self._lyrics = {}        # vid -> [(sec,line)] | [] | "..."
         self._aligning = None
         self._url_cache = {}
+        self.spectrum = None     # live FFT off the default sink monitor
+        try:
+            self.spectrum = N.SpectrumTap()
+            self.spectrum.start()
+        except Exception as e:
+            print("spectrum tap failed:", e, file=sys.stderr)
 
     # ── playback ─────────────────────────────────────────────────────────
     def _on_eof(self):
@@ -293,6 +299,17 @@ class H(BaseHTTPRequestHandler):
                 })
             elif p == "/api/queue":
                 self._send([track_json(t) for t in APP.queue])
+            elif p == "/api/spectrum":
+                n = 48
+                try:
+                    n = max(8, min(128, int((q.get("n") or ["48"])[0])))
+                except ValueError:
+                    pass
+                if APP.spectrum:
+                    self._send({"levels": APP.spectrum.levels(n),
+                                "producing": bool(APP.spectrum.producing)})
+                else:
+                    self._send({"levels": [0.0] * n, "producing": False})
             elif p == "/api/search":
                 query = (q.get("q") or [""])[0]
                 out = []

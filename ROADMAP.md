@@ -19,7 +19,7 @@ ALL checks pass: check it off `[x]`, append a one-line note to the LOG, and
    core) — only this folder. Reuse ytm.py functions via the imported `N`.
 
 ## Features (in priority order)
-- [ ] **Visualizer**: backend streams the audio spectrum (reuse `N.SpectrumTap`)
+- [x] **Visualizer**: backend streams the audio spectrum (reuse `N.SpectrumTap`)
       over `GET /api/spectrum` (or SSE); renderer draws a milkdrop/bars canvas
       behind the now-playing / in a `v` toggle. Theme-colored.
 - [ ] **Like / unlike**: a heart on each row + in the player bar; `POST /api/like`
@@ -42,3 +42,4 @@ ALL checks pass: check it off `[x]`, append a one-line note to the LOG, and
 
 ## LOG (newest last — one line per completed item)
 - bootstrap: backend + Electron MVP (search/library/playlists/play/lyrics/align) — working.
+- visualizer: GET /api/spectrum (reuses N.SpectrumTap, 0..1 levels); `v`/viz-btn toggles a theme-gradient bars canvas with attack/decay smoothing.

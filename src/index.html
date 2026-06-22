@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; img-src 'self' https: data:; connect-src http://127.0.0.1:* ; style-src 'self' 'unsafe-inline';" />
+  <title>NOCTURNE</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- sidebar -->
+    <aside id="sidebar">
+      <div class="logo">NOCTURNE</div>
+      <nav>
+        <button class="nav active" data-view="search">⌕ Search</button>
+        <button class="nav" data-view="library">♥ Library</button>
+      </nav>
+      <div class="pl-head">PLAYLISTS</div>
+      <div id="playlists"></div>
+    </aside>
+
+    <!-- main content -->
+    <main id="main">
+      <div id="searchbar" class="searchbar">
+        <input id="search-input" type="text"
+               placeholder="search YouTube Music…  (⏎)" autocomplete="off" />
+      </div>
+      <div id="list" class="list"></div>
+    </main>
+
+    <!-- lyrics overlay -->
+    <section id="lyrics-pane" class="lyrics-pane hidden">
+      <div id="lyrics-art" class="lyrics-art"></div>
+      <div id="lyrics-scroll" class="lyrics-scroll"></div>
+    </section>
+
+    <!-- player bar -->
+    <footer id="player">
+      <div class="np">
+        <img id="np-art" class="np-art" alt="" />
+        <div class="np-meta">
+          <div id="np-title" class="np-title">—</div>
+          <div id="np-artist" class="np-artist"></div>
+        </div>
+      </div>
+
+      <div class="controls">
+        <div class="buttons">
+          <button id="prev" title="previous">⏮</button>
+          <button id="toggle" class="play" title="play/pause">▶</button>
+          <button id="next" title="next">⏭</button>
+        </div>
+        <div class="seek">
+          <span id="t-cur" class="time">0:00</span>
+          <div id="bar" class="bar"><div id="bar-fill" class="bar-fill"></div></div>
+          <span id="t-dur" class="time">0:00</span>
+        </div>
+      </div>
+
+      <div class="right">
+        <button id="lyrics-btn" title="lyrics">lyrics</button>
+        <span class="vol-ico">🔊</span>
+        <div id="vol" class="vol"><div id="vol-fill" class="vol-fill"></div></div>
+      </div>
+    </footer>
+  </div>
+  <script src="renderer.js"></script>
+</body>
+</html>

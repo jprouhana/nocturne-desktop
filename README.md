@@ -12,6 +12,8 @@ playback, `yt-dlp`, SoundCloud merge, synced lyrics, AI force-alignment — is t
 └─────────────────────┘   poll    └─────────────────┘             yt-dlp, lyrics…)
 ```
 
+![NOCTURNE desktop — search results across YouTube Music + SoundCloud, with the sidebar library, playlists, and the player bar](assets/screenshot.png)
+
 ## Features
 - **Search** (YouTube Music + SoundCloud `☁` merged) · **Library** · **Playlists**
 - Play / pause / skip / **seek** / **volume** · **shuffle** · **repeat** (off/all/one)
